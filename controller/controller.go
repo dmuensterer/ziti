@@ -412,6 +412,7 @@ func (c *Controller) Run() error {
 	capabilityMask.SetBit(capabilityMask, capabilities.ControllerSingleRouterLinkSource, 1)
 	capabilityMask.SetBit(capabilityMask, capabilities.ControllerCreateCircuitV2, 1)
 	capabilityMask.SetBit(capabilityMask, capabilities.RouterDataModel, 1)
+	capabilityMask.SetBit(capabilityMask, capabilities.ControllerSupportsJWTLegacySessions, 1)
 
 	headers := map[int32][]byte{
 		channel.HelloVersionHeader:                       versionHeader,

@@ -27,4 +27,8 @@ const (
 	ControllerCreateCircuitV2 int = 3
 
 	RouterDataModel int = 4
+
+	// ControllerSupportsJWTLegacySessions indicates that the controller generates legacy
+	// session tokens as JWTs, carrying identity and service information
+	ControllerSupportsJWTLegacySessions int = 6
 )
