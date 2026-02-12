@@ -249,6 +249,7 @@ func Test_DuplicateLinkWithLinkCloseDialer(t *testing.T) {
 	ctx.Teardown()
 
 	ctrlListener := ctx.NewControlChannelListener()
+	defer func() { _ = ctrlListener.Close() }()
 	router1 := ctx.startFabricRouter(1)
 
 	linkChecker := testutil.NewLinkChecker(ctx.Req.Assertions)
@@ -348,5 +349,4 @@ func Test_DuplicateLinkWithLinkCloseDialer(t *testing.T) {
 	ctx.Teardown()
 	_ = router1cc.Close()
 	_ = router2cc.Close()
-	_ = ctrlListener.Close()
 }
