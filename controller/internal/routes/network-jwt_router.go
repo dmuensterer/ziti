@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sync"
 
 	"github.com/go-openapi/runtime/middleware"
 	"github.com/golang-jwt/jwt/v5"
@@ -33,6 +34,13 @@ const (
 
 type NetworkJwtRoute struct {
 	BasePath string
+
+	// networkJwt caches the signed token. The endpoint needs no authentication, so several
+	// requests can be in the handler at once, and the value has to be published safely rather
+	// than assigned to a plain string. The lock makes the first request do the signing and the
+	// rest wait for it, instead of each signing its own throwaway token.
+	networkJwtLock sync.Mutex
+	networkJwt     string
 }
 
 func NewNetworkJwtRouter() *NetworkJwtRoute {
@@ -53,41 +61,12 @@ func (r *NetworkJwtRoute) Register(ae *env.AppEnv) {
 
 }
 
-var networkJwt string
-
 func (r *NetworkJwtRoute) List(ae *env.AppEnv, rc *response.RequestContext) {
+	networkJwt, err := r.getNetworkJwt(ae)
 
-	if networkJwt == "" {
-		issuer := fmt.Sprintf(`https://%s/`, ae.GetConfig().Edge.Api.Address)
-
-		claims := &ziti.EnrollmentClaims{
-			EnrollmentMethod: EnrollmentMethodNetwork,
-			RegisteredClaims: jwt.RegisteredClaims{
-				Audience: jwt.ClaimStrings{env.JwtAudEnrollment},
-				Issuer:   issuer,
-				Subject:  issuer,
-				ID:       uuid.NewString(),
-			},
-		}
-
-		signer, err := ae.GetEnrollmentJwtSigner()
-
-		if err != nil {
-			pfxlog.Logger().WithError(err).Error("could not get enrollment signer to generate a network JWT")
-			rc.RespondWithError(errors.New("could not determine signer"))
-			return
-		}
-
-		jwtStr, genErr := signer.Generate(claims)
-
-		if genErr != nil {
-			networkJwt = ""
-			pfxlog.Logger().WithError(genErr).Error("could not sign network JWT")
-			rc.RespondWithError(errors.New("could not generate claims"))
-			return
-		}
-
-		networkJwt = jwtStr
+	if err != nil {
+		rc.RespondWithError(err)
+		return
 	}
 
 	name := DefaultNetworkJwtName
@@ -102,4 +81,62 @@ func (r *NetworkJwtRoute) List(ae *env.AppEnv, rc *response.RequestContext) {
 	}
 
 	rc.Respond(resp, http.StatusOK)
+}
+
+// getNetworkJwt returns the network JWT, signing it on first use.
+func (r *NetworkJwtRoute) getNetworkJwt(ae *env.AppEnv) (string, error) {
+	return r.cachedJwt(func() (string, error) {
+		return signNetworkJwt(ae)
+	})
+}
+
+// cachedJwt returns the cached token, calling generate once if there is none. A failed
+// attempt is not cached, so the next request tries again.
+func (r *NetworkJwtRoute) cachedJwt(generate func() (string, error)) (string, error) {
+	r.networkJwtLock.Lock()
+	defer r.networkJwtLock.Unlock()
+
+	if r.networkJwt != "" {
+		return r.networkJwt, nil
+	}
+
+	jwtStr, err := generate()
+
+	if err != nil {
+		return "", err
+	}
+
+	r.networkJwt = jwtStr
+
+	return r.networkJwt, nil
+}
+
+func signNetworkJwt(ae *env.AppEnv) (string, error) {
+	issuer := fmt.Sprintf(`https://%s/`, ae.GetConfig().Edge.Api.Address)
+
+	claims := &ziti.EnrollmentClaims{
+		EnrollmentMethod: EnrollmentMethodNetwork,
+		RegisteredClaims: jwt.RegisteredClaims{
+			Audience: jwt.ClaimStrings{env.JwtAudEnrollment},
+			Issuer:   issuer,
+			Subject:  issuer,
+			ID:       uuid.NewString(),
+		},
+	}
+
+	signer, err := ae.GetEnrollmentJwtSigner()
+
+	if err != nil {
+		pfxlog.Logger().WithError(err).Error("could not get enrollment signer to generate a network JWT")
+		return "", errors.New("could not determine signer")
+	}
+
+	jwtStr, err := signer.Generate(claims)
+
+	if err != nil {
+		pfxlog.Logger().WithError(err).Error("could not sign network JWT")
+		return "", errors.New("could not generate claims")
+	}
+
+	return jwtStr, nil
 }
